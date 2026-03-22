@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     # Local apps
     'corsheaders',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'accounts',
     'listings',
     'orders',
@@ -50,6 +51,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'config.middleware.NoCacheAuthenticatedApiMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -133,6 +135,10 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
     ),
+}
+
+SIMPLE_JWT = {
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 MEDIA_URL = '/media/'
