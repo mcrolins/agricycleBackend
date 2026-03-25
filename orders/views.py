@@ -1,4 +1,5 @@
-from rest_framework import generics, permissions
+from django.shortcuts import get_object_or_404
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -6,6 +7,7 @@ from django.db import transaction
 from .models import WasteRequest, RequestMessage
 from .serializers import (
     WasteRequestCreateSerializer,
+    WasteRequestUpdateSerializer,
     WasteRequestSerializer,
     RequestMessageSerializer
 )
@@ -46,6 +48,47 @@ class MyRequestsView(generics.ListAPIView):
 
     def get_queryset(self):
         return WasteRequest.objects.select_related("listing", "processor").filter(processor=self.request.user)
+
+
+class MyRequestDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = WasteRequest.objects.select_related("listing", "processor", "listing__farmer")
+    permission_classes = [permissions.IsAuthenticated, IsProcessor]
+
+    def get_queryset(self):
+        return self.queryset.filter(processor=self.request.user)
+
+    def get_serializer_class(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return WasteRequestUpdateSerializer
+        return WasteRequestSerializer
+
+    def _get_owned_request(self):
+        return self.get_object()
+
+    def perform_update(self, serializer):
+        wr = self._get_owned_request()
+        if wr.status != WasteRequest.Status.PENDING:
+            raise ValidationError("Only pending requests can be edited.")
+        serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        wr = self._get_owned_request()
+
+        if wr.status != WasteRequest.Status.PENDING:
+            raise ValidationError("Only pending requests can be deleted.")
+
+        listing = wr.listing
+        wr.delete()
+
+        has_pending = WasteRequest.objects.filter(
+            listing_id=listing.id,
+            status=WasteRequest.Status.PENDING,
+        ).exists()
+
+        listing.status = WasteListing.Status.REQUESTED if has_pending else WasteListing.Status.OPEN
+        listing.save(update_fields=["status"])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class IncomingRequestsView(generics.ListAPIView):
@@ -171,7 +214,10 @@ class RequestMessageListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         request_id = self.kwargs["pk"]
-        wr = WasteRequest.objects.select_related("listing__farmer").get(pk=request_id)
+        wr = get_object_or_404(
+            WasteRequest.objects.select_related("listing__farmer"),
+            pk=request_id,
+        )
 
         # Only participants can see messages
         if not (wr.processor_id == self.request.user.id or wr.listing.farmer_id == self.request.user.id):
@@ -180,7 +226,10 @@ class RequestMessageListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         request_id = self.kwargs["pk"]
-        wr = WasteRequest.objects.select_related("listing__farmer").get(pk=request_id)
+        wr = get_object_or_404(
+            WasteRequest.objects.select_related("listing__farmer"),
+            pk=request_id,
+        )
 
         # Only participants can send messages
         if not (wr.processor_id == self.request.user.id or wr.listing.farmer_id == self.request.user.id):

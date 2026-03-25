@@ -32,6 +32,12 @@ class WasteRequestCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class WasteRequestUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WasteRequest
+        fields = ["quantity_requested", "proposed_price"]
+
+
 class WasteRequestSerializer(serializers.ModelSerializer):
     processor_username = serializers.CharField(
         source="processor.username",
@@ -79,4 +85,4 @@ class RequestMessageSerializer(serializers.ModelSerializer):
             "text",
             "created_at",
         ]
-        read_only_fields = ["sender", "created_at"]
+        read_only_fields = ["request", "sender", "created_at"]
