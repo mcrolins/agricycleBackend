@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agricycle Admin Reports</title>
+    <style>
+      :root {
+        --bg: #f7f5ef;
+        --panel: #ffffff;
+        --ink: #1f2a20;
+        --muted: #6a7567;
+        --accent: #2f6b3a;
+        --accent-soft: #e0efe3;
+        --border: #e0ddd5;
+        --shadow: 0 12px 30px rgba(31, 42, 32, 0.08);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: linear-gradient(160deg, #f4f0e6 0%, #f9faf6 60%, #eef4ec 100%);
+        color: var(--ink);
+        font-family: "Georgia", "Times New Roman", serif;
+      }
+      header {
+        padding: 32px 6vw 20px;
+      }
+      .title {
+        font-size: 32px;
+        letter-spacing: 0.5px;
+        margin: 0 0 6px;
+      }
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+      }
+      main {
+        padding: 10px 6vw 50px;
+        display: grid;
+        gap: 24px;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 18px 16px;
+        box-shadow: var(--shadow);
+      }
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .card .value {
+        font-size: 26px;
+        font-weight: 600;
+      }
+      .section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 20px 22px;
+        box-shadow: var(--shadow);
+      }
+      .section h2 {
+        margin: 0 0 14px;
+        font-size: 20px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th, td {
+        text-align: left;
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      th {
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 20px;
+      }
+      .kpi {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .kpi span {
+        color: var(--muted);
+      }
+      .footer-note {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1 class="title">Agricycle Admin Reports</h1>
+      <p class="subtitle">
+        Platform overview with {{ granularity_label }} rollups.
+      </p>
+    </header>
+
+    <main>
+      <section class="cards">
+        <div class="card">
+          <h3>Total Transactions</h3>
+          <div class="value">{{ total_platform_transactions.total_transactions }}</div>
+        </div>
+        <div class="card">
+          <h3>Total Transaction Value</h3>
+          <div class="value">{{ total_platform_transactions.total_transaction_value }}</div>
+        </div>
+        <div class="card">
+          <h3>Active Users (Latest)</h3>
+          <div class="value">
+            {{ active_users_latest }}
+          </div>
+        </div>
+        <div class="card">
+          <h3>Sell Through Rate</h3>
+          <div class="value">{{ marketplace_liquidity.sell_through_rate }}</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="kpi">
+          <h2>Marketplace Liquidity</h2>
+          <span class="badge">{{ marketplace_liquidity.total_listings }} Listings</span>
+        </div>
+        <div class="grid-2">
+          <div>
+            <p><strong>Sold Listings</strong>: {{ marketplace_liquidity.sold_listings }}</p>
+            <p><strong>Unsold Listings</strong>: {{ marketplace_liquidity.unsold_listings }}</p>
+          </div>
+          <div>
+            <p><strong>Successful Sales</strong>: {{ marketplace_liquidity.successful_sales }}</p>
+            <p><strong>Sell Through Rate</strong>: {{ marketplace_liquidity.sell_through_rate }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Transaction Timeline</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Count</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in total_platform_transactions.timeline %}
+              <tr>
+                <td>{{ row.period }}</td>
+                <td>{{ row.count }}</td>
+                <td>{{ row.amount }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="3">No transactions yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section">
+        <h2>Active Users Over Time</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Active Users</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in active_users_over_time %}
+              <tr>
+                <td>{{ row.period }}</td>
+                <td>{{ row.active_users }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="2">No activity yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section">
+        <h2>Waste Categories Distribution</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Waste Type</th>
+              <th>Listings</th>
+              <th>Total Quantity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in waste_categories_distribution %}
+              <tr>
+                <td>{{ row.waste_type }}</td>
+                <td>{{ row.listing_count }}</td>
+                <td>{{ row.total_quantity }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="3">No listings yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="footer-note">Data updates in real-time from current listings and requests.</p>
+      </section>
+    </main>
+  </body>
+</html>
