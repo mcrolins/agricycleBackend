@@ -12,7 +12,16 @@ from rest_framework.views import APIView
 from listings.models import WasteListing
 from orders.models import WasteRequest
 
+from django.http import HttpResponse
+from django.db.models import Q
+from accounts.models import User
+from listings.models import WasteListing
+from orders.models import WasteRequest
 from .permissions import IsFarmer, IsPlatformAdmin, IsProcessor
+
+class IsPlatformAdminMixin:
+    def has_permission(self, request, view):
+        return IsPlatformAdmin().has_permission(request, view)
 
 
 SALE_STATUSES = [WasteRequest.Status.ACCEPTED, WasteRequest.Status.COMPLETED]
@@ -278,4 +287,107 @@ def admin_dashboard(request):
         if context["active_users_over_time"]
         else 0
     )
+
+    # Admin lists with filters
+    user_query = request.GET.get('user_query', '')
+    listing_query = request.GET.get('listing_query', '')
+    listing_type = request.GET.get('listing_type', '')
+    order_query = request.GET.get('order_query', '')
+
+    users = User.objects.all()
+    if user_query:
+        users = users.filter(Q(username__icontains=user_query) | Q(first_name__icontains=user_query) | Q(last_name__icontains=user_query))
+
+    listings = WasteListing.objects.all()
+    listing_q = Q()
+    if listing_query:
+        listing_q |= Q(waste_type__icontains=listing_query) | Q(notes__icontains=listing_query)
+    if listing_type:
+        listing_q &= Q(waste_type__icontains=listing_type)
+    if listing_q:
+        listings = listings.filter(listing_q)
+
+    orders = WasteRequest.objects.all()
+    if order_query:
+        orders = orders.filter(
+            Q(listing__waste_type__icontains=order_query) |
+            Q(listing__farmer__username__icontains=order_query)
+        )
+
+    context.update({
+        'users': users[:100],  # Limit for performance
+        'listings': listings[:100],
+        'orders': orders[:100],
+        'user_query': user_query,
+        'listing_query': listing_query,
+        'listing_type': listing_type,
+        'order_query': order_query,
+    })
+
     return render(request, "reports/admin_dashboard.html", context)
+
+
+from django.http import HttpResponse
+import csv
+
+class AdminUsersCSV(IsPlatformAdminMixin, APIView):
+    permission_classes = [IsPlatformAdmin]
+
+    def get(self, request):
+        user_query = request.GET.get('user_query', '')
+        users = User.objects.all()
+        if user_query:
+            users = users.filter(Q(username__icontains=user_query) | Q(first_name__icontains=user_query) | Q(last_name__icontains=user_query))
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="admin_users.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['ID', 'Username', 'Full Name', 'Role', 'Phone', 'Date Joined'])
+        for user in users:
+            writer.writerow([user.id, user.username, user.full_name, user.role, user.phone_number, user.date_joined])
+        return response
+
+
+class AdminListingsCSV(IsPlatformAdminMixin, APIView):
+    permission_classes = [IsPlatformAdmin]
+
+    def get(self, request):
+        listing_query = request.GET.get('listing_query', '')
+        listing_type = request.GET.get('listing_type', '')
+        listings = WasteListing.objects.all()
+        listing_q = Q()
+        if listing_query:
+            listing_q |= Q(waste_type__icontains=listing_query) | Q(notes__icontains=listing_query)
+        if listing_type:
+            listing_q &= Q(waste_type__icontains=listing_type)
+        if listing_q:
+            listings = listings.filter(listing_q)
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="admin_listings.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['ID', 'Waste Type', 'Quantity', 'Farmer', 'Status', 'Created'])
+        for listing in listings:
+            writer.writerow([listing.id, listing.waste_type, f"{listing.quantity}{listing.unit}", listing.farmer.username, listing.status, listing.created_at])
+        return response
+
+
+class AdminOrdersCSV(IsPlatformAdminMixin, APIView):
+    permission_classes = [IsPlatformAdmin]
+
+    def get(self, request):
+        order_query = request.GET.get('order_query', '')
+        orders = WasteRequest.objects.all()
+        if order_query:
+            orders = orders.filter(
+                Q(listing__waste_type__icontains=order_query) |
+                Q(listing__farmer__username__icontains=order_query)
+            )
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="admin_orders.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['ID', 'Listing ID', 'Processor', 'Quantity Requested', 'Status', 'Created'])
+        for order in orders:
+            writer.writerow([order.id, order.listing.id, order.processor.username, f"{order.quantity_requested}", order.status, order.created_at])
+        return response

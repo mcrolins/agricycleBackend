@@ -30,7 +30,6 @@ class RequestCreateView(generics.CreateAPIView):
 
         # ✅ Block requests if listing is not available
         if listing.status in [
-            WasteListing.Status.ACCEPTED,
             WasteListing.Status.COMPLETED,
             WasteListing.Status.CANCELLED,
         ]:
@@ -143,15 +142,21 @@ class RequestStatusUpdateView(generics.UpdateAPIView):
         ]:
             raise ValidationError("This request is already closed.")
 
-        # ✅ Locking behavior on ACCEPT (atomic)
+        # Partial accept: subtract quantity, re-open if remainder >0 (atomic)
         if new_status == WasteRequest.Status.ACCEPTED:
+            from decimal import Decimal
             with transaction.atomic():
                 wr.status = WasteRequest.Status.ACCEPTED
                 wr.save(update_fields=["status"])
 
-                # Lock the listing
-                wr.listing.status = WasteListing.Status.ACCEPTED
-                wr.listing.save(update_fields=["status"])
+                listing = wr.listing
+                original_quantity = listing.quantity
+                total_accepted = sum(
+                    r.quantity_requested for r in listing.requests.filter(status=WasteRequest.Status.ACCEPTED)
+                )
+                listing.quantity = max(Decimal('0.00'), original_quantity - total_accepted)
+                listing.status = WasteListing.Status.COMPLETED if listing.quantity <= 0 else WasteListing.Status.OPEN
+                listing.save(update_fields=["quantity", "status"])
 
                 # Auto-reject other pending requests for same listing
                 WasteRequest.objects.filter(
