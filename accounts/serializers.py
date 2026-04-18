@@ -6,11 +6,8 @@ class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     phone_number = serializers.CharField(required=True)
 
-
     first_name = serializers.CharField(required=True, allow_blank=False)
     last_name = serializers.CharField(required=True, allow_blank=False)
-
-
 
     class Meta:
         model = User
@@ -40,4 +37,22 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
         return user
 
-    
+
+class UserAdminSerializer(serializers.ModelSerializer):
+    full_name = serializers.ReadOnlyField()
+    is_platform_admin = serializers.BooleanField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'full_name', 'first_name', 'last_name', 'email', 'role', 'phone_number', 'is_active', 'date_joined', 'is_platform_admin']
+
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token['role'] = user.role
+        return token
+

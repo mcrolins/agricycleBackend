@@ -44,7 +44,8 @@ INSTALLED_APPS = [
     'accounts',
     'listings',
     'orders',
-]
+    'reports',
+] 
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',

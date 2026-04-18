@@ -12,6 +12,8 @@ from .serializers import (
     RequestMessageSerializer
 )
 from .permisions import IsProcessor, IsFarmer, IsRequestParticipant  # ✅ fixed spelling
+from reports.permissions import IsPlatformAdmin
+from .serializers import WasteRequestSerializer
 from listings.models import WasteListing
 
 
@@ -236,3 +238,19 @@ class RequestMessageListCreateView(generics.ListCreateAPIView):
             raise PermissionDenied("Not allowed.")
 
         serializer.save(request=wr, sender=self.request.user)
+
+
+class AdminRequestsView(generics.ListAPIView):
+    """
+    Platform admin overview of all waste requests.
+    """
+    serializer_class = WasteRequestSerializer
+    permission_classes = [IsPlatformAdmin]
+
+    def get_queryset(self):
+        from django.db.models import Count
+        return WasteRequest.objects.select_related(
+            'listing__farmer', 'processor', 'listing'
+        ).prefetch_related('messages').annotate(
+            message_count=Count('messages')
+        ).order_by('-created_at')

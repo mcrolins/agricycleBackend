@@ -7,6 +7,7 @@ from .views import (
     RequestStatusUpdateView,
     RequestContactInfoView,
     RequestMessageListCreateView,
+    AdminRequestsView,
 )
 
 urlpatterns = [
@@ -19,4 +20,5 @@ urlpatterns = [
 
     # Simple REST chat
     path("<int:pk>/messages/", RequestMessageListCreateView.as_view(), name="request_messages"),
+    path("admin/", AdminRequestsView.as_view(), name="admin_requests"),
 ]
