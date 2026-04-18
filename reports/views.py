@@ -1,22 +1,21 @@
+import csv
+import datetime
 from collections import defaultdict
 from decimal import Decimal
 
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth
-from django.contrib.auth.decorators import login_required, user_passes_test
-from django.http import HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import render
+from django.utils.dateparse import parse_date
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from listings.models import WasteListing
-from orders.models import WasteRequest
-
-from django.http import HttpResponse
-from django.db.models import Q
 from accounts.models import User
 from listings.models import WasteListing
 from orders.models import WasteRequest
+
 from .permissions import IsFarmer, IsPlatformAdmin, IsProcessor
 
 class IsPlatformAdminMixin:
@@ -32,11 +31,9 @@ def _get_trunc(granularity):
 
 
 def _normalize_granularity(request):
-    granularity = request.query_params.get("granularity", "month").lower()
+    params = getattr(request, "query_params", request.GET)
+    granularity = params.get("granularity", "month").lower()
     return granularity if granularity in {"day", "month"} else "month"
-
-
-import datetime
 
 def _format_period(period):
     if isinstance(period, datetime.datetime):
@@ -130,6 +127,76 @@ def _build_admin_report_data(granularity):
             else 0,
         },
     }
+
+
+def _apply_name_query(queryset, query, fields):
+    if not query:
+        return queryset
+
+    terms = [term.strip() for term in query.split() if term.strip()]
+    for term in terms:
+        term_filter = Q()
+        for field in fields:
+            term_filter |= Q(**{f"{field}__icontains": term})
+        queryset = queryset.filter(term_filter)
+    return queryset
+
+
+def _filter_users_queryset(query_params):
+    users = User.objects.all().order_by("-date_joined")
+    user_query = query_params.get("user_query", "").strip()
+    user_date_joined = query_params.get("user_date_joined", "").strip()
+    user_location = query_params.get("user_location", "").strip()
+
+    users = _apply_name_query(users, user_query, ("username", "first_name", "last_name"))
+
+    joined_date = parse_date(user_date_joined) if user_date_joined else None
+    if joined_date:
+        users = users.filter(date_joined__date=joined_date)
+
+    if user_location:
+        users = users.filter(
+            Q(waste_listings__location__icontains=user_location)
+            | Q(waste_requests__listing__location__icontains=user_location)
+        ).distinct()
+
+    return users, user_query, user_date_joined, user_location
+
+
+def _filter_listings_queryset(query_params):
+    listings = WasteListing.objects.select_related("farmer").order_by("-created_at")
+    listing_waste_type = query_params.get("listing_waste_type", "").strip()
+    listing_user_query = query_params.get("listing_user_query", "").strip()
+    listing_location = query_params.get("listing_location", "").strip()
+
+    if listing_waste_type:
+        listings = listings.filter(waste_type__icontains=listing_waste_type)
+    if listing_user_query:
+        listings = _apply_name_query(
+            listings,
+            listing_user_query,
+            ("farmer__username", "farmer__first_name", "farmer__last_name"),
+        )
+    if listing_location:
+        listings = listings.filter(location__icontains=listing_location)
+
+    return listings, listing_waste_type, listing_user_query, listing_location
+
+
+def _filter_orders_queryset(query_params):
+    orders = WasteRequest.objects.select_related("listing", "listing__farmer", "processor").order_by(
+        "-created_at"
+    )
+    order_query = query_params.get("order_query", "").strip()
+    order_location = query_params.get("order_location", "").strip()
+    if order_query:
+        orders = orders.filter(
+            Q(listing__waste_type__icontains=order_query)
+            | Q(listing__farmer__username__icontains=order_query)
+        )
+    if order_location:
+        orders = orders.filter(listing__location__icontains=order_location)
+    return orders, order_query, order_location
 
 
 class FarmerReportsView(APIView):
@@ -288,63 +355,60 @@ def admin_dashboard(request):
         else 0
     )
 
-    # Admin lists with filters
-    user_query = request.GET.get('user_query', '')
-    listing_query = request.GET.get('listing_query', '')
-    listing_type = request.GET.get('listing_type', '')
-    order_query = request.GET.get('order_query', '')
+    users, user_query, user_date_joined, user_location = _filter_users_queryset(request.GET)
+    listings, listing_waste_type, listing_user_query, listing_location = _filter_listings_queryset(request.GET)
+    orders, order_query, order_location = _filter_orders_queryset(request.GET)
 
-    users = User.objects.all()
-    if user_query:
-        users = users.filter(Q(username__icontains=user_query) | Q(first_name__icontains=user_query) | Q(last_name__icontains=user_query))
-
-    listings = WasteListing.objects.all()
-    listing_q = Q()
-    if listing_query:
-        listing_q |= Q(waste_type__icontains=listing_query) | Q(notes__icontains=listing_query)
-    if listing_type:
-        listing_q &= Q(waste_type__icontains=listing_type)
-    if listing_q:
-        listings = listings.filter(listing_q)
-
-    orders = WasteRequest.objects.all()
-    if order_query:
-        orders = orders.filter(
-            Q(listing__waste_type__icontains=order_query) |
-            Q(listing__farmer__username__icontains=order_query)
-        )
+    # Gather distinct locations for dropdown options
+    all_locations = list(
+        WasteListing.objects.values_list("location", flat=True)
+        .distinct()
+        .order_by("location")
+    )
 
     context.update({
-        'users': users[:100],  # Limit for performance
-        'listings': listings[:100],
-        'orders': orders[:100],
-        'user_query': user_query,
-        'listing_query': listing_query,
-        'listing_type': listing_type,
-        'order_query': order_query,
+        "users": users[:100],
+        "users_total": users.count(),
+        "listings": listings[:100],
+        "listings_total": listings.count(),
+        "orders": orders[:100],
+        "orders_total": orders.count(),
+        "user_query": user_query,
+        "user_date_joined": user_date_joined,
+        "user_location": user_location,
+        "listing_waste_type": listing_waste_type,
+        "listing_user_query": listing_user_query,
+        "listing_location": listing_location,
+        "order_query": order_query,
+        "order_location": order_location,
+        "all_locations": all_locations,
     })
 
     return render(request, "reports/admin_dashboard.html", context)
-
-
-from django.http import HttpResponse
-import csv
 
 class AdminUsersCSV(IsPlatformAdminMixin, APIView):
     permission_classes = [IsPlatformAdmin]
 
     def get(self, request):
-        user_query = request.GET.get('user_query', '')
-        users = User.objects.all()
-        if user_query:
-            users = users.filter(Q(username__icontains=user_query) | Q(first_name__icontains=user_query) | Q(last_name__icontains=user_query))
+        users, _, _, _ = _filter_users_queryset(request.GET)
 
-        response = HttpResponse(content_type='text/csv')
+        response = HttpResponse(content_type="text/csv")
         response['Content-Disposition'] = 'attachment; filename="admin_users.csv"'
         writer = csv.writer(response)
-        writer.writerow(['ID', 'Username', 'Full Name', 'Role', 'Phone', 'Date Joined'])
+        writer.writerow(["ID", "Username", "First Name", "Last Name", "Full Name", "Role", "Phone", "Date Joined"])
         for user in users:
-            writer.writerow([user.id, user.username, user.full_name, user.role, user.phone_number, user.date_joined])
+            writer.writerow(
+                [
+                    user.id,
+                    user.username,
+                    user.first_name,
+                    user.last_name,
+                    user.full_name,
+                    user.role,
+                    user.phone_number,
+                    user.date_joined,
+                ]
+            )
         return response
 
 
@@ -352,23 +416,40 @@ class AdminListingsCSV(IsPlatformAdminMixin, APIView):
     permission_classes = [IsPlatformAdmin]
 
     def get(self, request):
-        listing_query = request.GET.get('listing_query', '')
-        listing_type = request.GET.get('listing_type', '')
-        listings = WasteListing.objects.all()
-        listing_q = Q()
-        if listing_query:
-            listing_q |= Q(waste_type__icontains=listing_query) | Q(notes__icontains=listing_query)
-        if listing_type:
-            listing_q &= Q(waste_type__icontains=listing_type)
-        if listing_q:
-            listings = listings.filter(listing_q)
+        listings, _, _, _ = _filter_listings_queryset(request.GET)
 
-        response = HttpResponse(content_type='text/csv')
+        response = HttpResponse(content_type="text/csv")
         response['Content-Disposition'] = 'attachment; filename="admin_listings.csv"'
         writer = csv.writer(response)
-        writer.writerow(['ID', 'Waste Type', 'Quantity', 'Farmer', 'Status', 'Created'])
+        writer.writerow(
+            [
+                "ID",
+                "Waste Type",
+                "Quantity",
+                "Unit",
+                "Location",
+                "Farmer Username",
+                "Farmer First Name",
+                "Farmer Last Name",
+                "Status",
+                "Created",
+            ]
+        )
         for listing in listings:
-            writer.writerow([listing.id, listing.waste_type, f"{listing.quantity}{listing.unit}", listing.farmer.username, listing.status, listing.created_at])
+            writer.writerow(
+                [
+                    listing.id,
+                    listing.waste_type,
+                    listing.quantity,
+                    listing.unit,
+                    listing.location,
+                    listing.farmer.username,
+                    listing.farmer.first_name,
+                    listing.farmer.last_name,
+                    listing.status,
+                    listing.created_at,
+                ]
+            )
         return response
 
 
@@ -376,18 +457,12 @@ class AdminOrdersCSV(IsPlatformAdminMixin, APIView):
     permission_classes = [IsPlatformAdmin]
 
     def get(self, request):
-        order_query = request.GET.get('order_query', '')
-        orders = WasteRequest.objects.all()
-        if order_query:
-            orders = orders.filter(
-                Q(listing__waste_type__icontains=order_query) |
-                Q(listing__farmer__username__icontains=order_query)
-            )
+        orders, _, _ = _filter_orders_queryset(request.GET)
 
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="admin_orders.csv"'
         writer = csv.writer(response)
-        writer.writerow(['ID', 'Listing ID', 'Processor', 'Quantity Requested', 'Status', 'Created'])
+        writer.writerow(['ID', 'Listing ID', 'Processor', 'Quantity Requested', 'Location', 'Status', 'Created'])
         for order in orders:
-            writer.writerow([order.id, order.listing.id, order.processor.username, f"{order.quantity_requested}", order.status, order.created_at])
+            writer.writerow([order.id, order.listing.id, order.processor.username, f"{order.quantity_requested}", order.listing.location, order.status, order.created_at])
         return response

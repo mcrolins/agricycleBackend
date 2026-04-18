@@ -171,6 +171,23 @@
       .btn:hover {
         opacity: 0.9;
       }
+      .filters label {
+        display: grid;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .filters .filter-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .btn-secondary {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+      }
       @media print {
         body * { visibility: hidden; }
         .section, .section * { visibility: visible; }
@@ -184,11 +201,57 @@
   <body>
     <form method="get" class="filters">
       <div class="filter-group">
-        <input type="text" name="user_query" placeholder="Filter users by name/username" value="{{ user_query }}">
-        <input type="text" name="listing_query" placeholder="Filter listings by type/notes" value="{{ listing_query }}">
-        <input type="text" name="listing_type" placeholder="Listing type" value="{{ listing_type }}">
-        <input type="text" name="order_query" placeholder="Filter orders by type/farmer" value="{{ order_query }}">
-        <button type="submit">Filter</button>
+        <label>
+          User names
+          <input type="text" name="user_query" placeholder="First name, last name, or username" value="{{ user_query }}">
+        </label>
+        <label>
+          Date joined
+          <input type="date" name="user_date_joined" value="{{ user_date_joined }}">
+        </label>
+        <label>
+          User location
+          <select name="user_location">
+            <option value="">All locations</option>
+            {% for loc in all_locations %}
+              <option value="{{ loc }}" {% if user_location == loc %}selected{% endif %}>{{ loc }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Listing waste type
+          <input type="text" name="listing_waste_type" placeholder="Waste type" value="{{ listing_waste_type }}">
+        </label>
+        <label>
+          Listing user names
+          <input type="text" name="listing_user_query" placeholder="Farmer first name, last name, or username" value="{{ listing_user_query }}">
+        </label>
+        <label>
+          Listing location
+          <select name="listing_location">
+            <option value="">All locations</option>
+            {% for loc in all_locations %}
+              <option value="{{ loc }}" {% if listing_location == loc %}selected{% endif %}>{{ loc }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Orders
+          <input type="text" name="order_query" placeholder="Filter orders by type/farmer" value="{{ order_query }}">
+        </label>
+        <label>
+          Order location
+          <select name="order_location">
+            <option value="">All locations</option>
+            {% for loc in all_locations %}
+              <option value="{{ loc }}" {% if order_location == loc %}selected{% endif %}>{{ loc }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div class="filter-actions">
+          <button type="submit">Filter</button>
+          <a href="{% url 'admin_dashboard' %}" class="btn btn-secondary">Clear</a>
+        </div>
       </div>
     </form>
     <header>
@@ -287,12 +350,12 @@
         </table>
       </section>
 
-      <section class="section">
+      <section class="section" id="users-report">
         <div class="section-header">
-          <h2>Users ({{ users|length }})</h2>
+          <h2>Users ({{ users_total }})</h2>
           <div class="actions">
-            <a href="{% url 'reports:admin_users_csv' %}?{{ request.GET.urlencode }}" class="btn">Download CSV</a>
-            <button class="btn btn-print" onclick="window.print()">Print</button>
+            <a href="{% url 'admin_users_csv' %}?{{ request.GET.urlencode }}" class="btn">Download CSV</a>
+            <button type="button" class="btn btn-print" onclick="printSection('users-report', 'Users Report')">Print</button>
           </div>
         </div>
         <table>
@@ -323,12 +386,12 @@
         </table>
       </section>
 
-      <section class="section">
+      <section class="section" id="listings-report">
         <div class="section-header">
-          <h2>Listings ({{ listings|length }})</h2>
+          <h2>Listings ({{ listings_total }})</h2>
           <div class="actions">
-            <a href="{% url 'reports:admin_listings_csv' %}?{{ request.GET.urlencode }}" class="btn">Download CSV</a>
-            <button class="btn btn-print" onclick="window.print()">Print</button>
+            <a href="{% url 'admin_listings_csv' %}?{{ request.GET.urlencode }}" class="btn">Download CSV</a>
+            <button type="button" class="btn btn-print" onclick="printSection('listings-report', 'Listings Report')">Print</button>
           </div>
         </div>
         <table>
@@ -337,6 +400,7 @@
               <th>ID</th>
               <th>Waste Type</th>
               <th>Quantity</th>
+              <th>Location</th>
               <th>Farmer</th>
               <th>Status</th>
               <th>Created</th>
@@ -348,23 +412,24 @@
                 <td>{{ listing.id }}</td>
                 <td>{{ listing.waste_type }}</td>
                 <td>{{ listing.quantity }}{{ listing.unit }}</td>
+                <td>{{ listing.location }}</td>
                 <td>{{ listing.farmer.username }}</td>
                 <td><span class="badge">{{ listing.status }}</span></td>
                 <td>{{ listing.created_at|date:"M d, Y" }}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="6">No listings found.</td></tr>
+              <tr><td colspan="7">No listings found.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </section>
 
-      <section class="section">
+      <section class="section" id="orders-report">
         <div class="section-header">
-          <h2>Orders/Requests ({{ orders|length }})</h2>
+          <h2>Orders/Requests ({{ orders_total }})</h2>
           <div class="actions">
-            <a href="{% url 'reports:admin_orders_csv' %}?{{ request.GET.urlencode }}" class="btn">Download CSV</a>
-            <button class="btn btn-print" onclick="window.print()">Print</button>
+            <a href="{% url 'admin_orders_csv' %}?{{ request.GET.urlencode }}" class="btn">Download CSV</a>
+            <button type="button" class="btn btn-print" onclick="printSection('orders-report', 'Orders Report')">Print</button>
           </div>
         </div>
         <table>
@@ -374,6 +439,7 @@
               <th>Listing ID</th>
               <th>Processor</th>
               <th>Qty Requested</th>
+              <th>Location</th>
               <th>Status</th>
               <th>Created</th>
             </tr>
@@ -385,11 +451,12 @@
                 <td>{{ order.listing.id }}</td>
                 <td>{{ order.processor.username }}</td>
                 <td>{{ order.quantity_requested }}</td>
+                <td>{{ order.listing.location }}</td>
                 <td><span class="badge">{{ order.status }}</span></td>
                 <td>{{ order.created_at|date:"M d, Y" }}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="6">No orders found.</td></tr>
+              <tr><td colspan="7">No orders found.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -422,5 +489,38 @@
         <p class="footer-note">Data updates in real-time from current listings and requests. Lists limited to 100 for performance.</p>
       </section>
     </main>
+    <script>
+      function printSection(sectionId, title) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+
+        const popup = window.open("", "_blank", "width=1000,height=800");
+        if (!popup) return;
+
+        popup.document.write(`
+          <html>
+            <head>
+              <title>${title}</title>
+              <style>
+                body { font-family: Georgia, "Times New Roman", serif; margin: 24px; color: #1f2a20; }
+                h1 { margin: 0 0 18px; font-size: 24px; }
+                table { width: 100%; border-collapse: collapse; font-size: 14px; }
+                th, td { text-align: left; padding: 10px 8px; border: 1px solid #d7d2c9; }
+                th { background: #f2eee4; text-transform: uppercase; font-size: 12px; letter-spacing: 0.06em; }
+                .badge { padding: 3px 8px; border-radius: 999px; background: #e0efe3; color: #2f6b3a; }
+                .actions { display: none; }
+              </style>
+            </head>
+            <body>
+              <h1>${title}</h1>
+              ${section.outerHTML}
+            </body>
+          </html>
+        `);
+        popup.document.close();
+        popup.focus();
+        popup.print();
+      }
+    </script>
   </body>
 </html>
