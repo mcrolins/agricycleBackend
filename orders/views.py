@@ -2,14 +2,15 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from .models import WasteRequest, RequestMessage
 from .serializers import (
     WasteRequestCreateSerializer,
     WasteRequestUpdateSerializer,
     WasteRequestSerializer,
-    RequestMessageSerializer
+    RequestMessageSerializer,
+    get_listing_remaining_quantity,
 )
 from .permisions import IsProcessor, IsFarmer, IsRequestParticipant  # ✅ fixed spelling
 from reports.permissions import IsPlatformAdmin
@@ -21,6 +22,7 @@ class RequestCreateView(generics.CreateAPIView):
     serializer_class = WasteRequestCreateSerializer
     permission_classes = [permissions.IsAuthenticated, IsProcessor]
 
+    @transaction.atomic
     def perform_create(self, serializer):
         listing = serializer.validated_data["listing"]
 
@@ -28,12 +30,17 @@ class RequestCreateView(generics.CreateAPIView):
         if listing.farmer_id == self.request.user.id:
             raise ValidationError("You cannot request your own listing.")
 
-        # ✅ Block requests if listing is not available
+        # ✅ Block requests if listing is fully completed or cancelled
         if listing.status in [
             WasteListing.Status.COMPLETED,
             WasteListing.Status.CANCELLED,
         ]:
             raise ValidationError("This listing is not available for requests.")
+
+        # ✅ Check remaining quantity for partially-accepted listings
+        remaining = get_listing_remaining_quantity(listing)
+        if remaining <= 0:
+            raise ValidationError("This listing has no remaining quantity available.")
 
         # ✅ OPEN -> REQUESTED when first request comes in
         if listing.status == WasteListing.Status.OPEN:
@@ -142,27 +149,51 @@ class RequestStatusUpdateView(generics.UpdateAPIView):
         ]:
             raise ValidationError("This request is already closed.")
 
-        # Partial accept: subtract quantity, re-open if remainder >0 (atomic)
+        # Partial accept: only accept if the offer fits in the remaining quantity.
         if new_status == WasteRequest.Status.ACCEPTED:
-            from decimal import Decimal
             with transaction.atomic():
+                wr = WasteRequest.objects.select_for_update().select_related(
+                    "listing",
+                    "processor",
+                    "listing__farmer",
+                ).get(pk=wr.pk)
+                listing = WasteListing.objects.select_for_update().get(pk=wr.listing_id)
+                remaining_quantity = get_listing_remaining_quantity(
+                    listing,
+                    exclude_request_id=wr.id,
+                )
+
+                if wr.quantity_requested > remaining_quantity:
+                    raise ValidationError({
+                        "quantity_requested": "This offer exceeds the remaining listing quantity."
+                    })
+
                 wr.status = WasteRequest.Status.ACCEPTED
                 wr.save(update_fields=["status"])
 
-                listing = wr.listing
-                original_quantity = listing.quantity
-                total_accepted = sum(
-                    r.quantity_requested for r in listing.requests.filter(status=WasteRequest.Status.ACCEPTED)
-                )
-                listing.quantity = max(Decimal('0.00'), original_quantity - total_accepted)
-                listing.status = WasteListing.Status.COMPLETED if listing.quantity <= 0 else WasteListing.Status.OPEN
-                listing.save(update_fields=["quantity", "status"])
+                remaining_after_accept = remaining_quantity - wr.quantity_requested
+                if remaining_after_accept <= 0:
+                    # Fully allocated: mark completed, reject all remaining pending
+                    listing.status = WasteListing.Status.COMPLETED
+                    WasteRequest.objects.filter(
+                        listing_id=wr.listing_id,
+                        status=WasteRequest.Status.PENDING,
+                    ).exclude(id=wr.id).update(status=WasteRequest.Status.REJECTED)
+                else:
+                    # Still has remaining quantity: auto-reject bids that exceed the remainder
+                    WasteRequest.objects.filter(
+                        listing_id=wr.listing_id,
+                        status=WasteRequest.Status.PENDING,
+                        quantity_requested__gt=remaining_after_accept,
+                    ).exclude(id=wr.id).update(status=WasteRequest.Status.REJECTED)
 
-                # Auto-reject other pending requests for same listing
-                WasteRequest.objects.filter(
-                    listing_id=wr.listing_id,
-                    status=WasteRequest.Status.PENDING
-                ).exclude(id=wr.id).update(status=WasteRequest.Status.REJECTED)
+                    has_pending = WasteRequest.objects.filter(
+                        listing_id=wr.listing_id,
+                        status=WasteRequest.Status.PENDING,
+                    ).exists()
+                    listing.status = WasteListing.Status.REQUESTED if has_pending else WasteListing.Status.OPEN
+
+                listing.save(update_fields=["status"])
 
             return Response(WasteRequestSerializer(wr).data)
 
@@ -205,10 +236,12 @@ class RequestContactInfoView(generics.RetrieveAPIView):
             "request_id": wr.id,
             "listing_id": wr.listing_id,
             "farmer": {
+                "id": farmer.id,
                 "name": (farmer.full_name if getattr(farmer, "full_name", "") else farmer.username),
                 "phone_number": farmer.phone_number,
             },
             "processor": {
+                "id": processor.id,
                 "name": (processor.full_name if getattr(processor, "full_name", "") else processor.username),
                 "phone_number": processor.phone_number,
             },

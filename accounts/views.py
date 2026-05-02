@@ -5,8 +5,27 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 from django.db.models import Q
 from django.utils.dateparse import parse_date
 from reports.permissions import IsPlatformAdmin
-from .serializers import RegisterSerializer, UserAdminSerializer, CustomTokenObtainPairSerializer
-from .models import User
+from .serializers import RegisterSerializer, UserAdminSerializer, CustomTokenObtainPairSerializer, ReviewSerializer, ComplaintSerializer, ComplaintAdminSerializer, FarmerProfileSerializer
+from .models import User, Review, Complaint
+
+class ReviewCreateView(generics.CreateAPIView):
+    serializer_class = ReviewSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        serializer.save(reviewer=self.request.user)
+
+class ComplaintCreateView(generics.CreateAPIView):
+    serializer_class = ComplaintSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        serializer.save(reporter=self.request.user)
+
+class FarmerProfileView(generics.RetrieveAPIView):
+    queryset = User.objects.filter(role='FARMER')
+    serializer_class = FarmerProfileSerializer
+    permission_classes = [permissions.AllowAny]
 
 
 class RegisterView(generics.CreateAPIView):
@@ -57,6 +76,14 @@ class PlatformAdminUserListView(generics.ListAPIView):
             users = users.filter(date_joined__date=joined_date)
 
         return users
+        
+class PlatformAdminComplaintListView(generics.ListAPIView):
+    """
+    Platform admin view to list all complaints.
+    """
+    queryset = Complaint.objects.all().select_related('reporter', 'reported').order_by("-created_at")
+    serializer_class = ComplaintAdminSerializer
+    permission_classes = [IsPlatformAdmin]
 
 from rest_framework_simplejwt.views import TokenObtainPairView
 

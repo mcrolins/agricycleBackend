@@ -23,10 +23,6 @@ class WasteRequest(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-        constraints = [
-            # Prevent same processor from spamming same listing multiple times
-            models.UniqueConstraint(fields=["listing", "processor"], name="unique_request_per_listing_per_processor")
-        ]
 
     def __str__(self):
         return f"Request {self.id} -> Listing {self.listing_id} ({self.status})"

@@ -91,7 +91,23 @@ class OrdersWorkflowTests(APITestCase):
         self.listing.refresh_from_db()
         self.assertEqual(self.listing.status, WasteListing.Status.OPEN)
 
-    def test_farmer_accepting_request_rejects_others_and_unlocks_contact(self):
+    def test_duplicate_request_for_listing_returns_validation_error(self):
+        self.create_request()
+
+        response = self.client.post(
+            reverse("request_create"),
+            {
+                "listing": self.listing.id,
+                "quantity_requested": "10.00",
+                "proposed_price": "100.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(WasteRequest.objects.filter(listing=self.listing, processor=self.processor).count(), 1)
+
+    def test_farmer_accepting_request_keeps_other_requests_when_quantity_remains(self):
         first = self.create_request(self.processor)
         self.client.credentials()
         second = self.create_request(self.other_processor, quantity="30.00", price="250.00")
@@ -105,17 +121,54 @@ class OrdersWorkflowTests(APITestCase):
         self.assertEqual(accept_response.status_code, status.HTTP_200_OK)
 
         accepted = WasteRequest.objects.get(pk=first.data["id"])
-        rejected = WasteRequest.objects.get(pk=second.data["id"])
+        pending = WasteRequest.objects.get(pk=second.data["id"])
         self.assertEqual(accepted.status, WasteRequest.Status.ACCEPTED)
-        self.assertEqual(rejected.status, WasteRequest.Status.REJECTED)
+        self.assertEqual(pending.status, WasteRequest.Status.PENDING)
 
         self.listing.refresh_from_db()
-        self.assertEqual(self.listing.status, WasteListing.Status.ACCEPTED)
+        self.assertEqual(str(self.listing.quantity), "100.00")
+        self.assertEqual(self.listing.status, WasteListing.Status.REQUESTED)
 
         contact_response = self.client.get(reverse("request_contact", args=[first.data["id"]]))
         self.assertEqual(contact_response.status_code, status.HTTP_200_OK)
         self.assertEqual(contact_response.data["farmer"]["phone_number"], self.farmer.phone_number)
         self.assertEqual(contact_response.data["processor"]["phone_number"], self.processor.phone_number)
+
+    def test_farmer_cannot_accept_offer_larger_than_remaining_quantity(self):
+        first = self.create_request(self.processor, quantity="80.00")
+        self.client.credentials()
+        second = self.create_request(self.other_processor, quantity="30.00", price="250.00")
+
+        self.authenticate(self.farmer)
+        accept_first_response = self.client.patch(
+            reverse("request_status", args=[first.data["id"]]),
+            {"status": WasteRequest.Status.ACCEPTED},
+            format="json",
+        )
+        self.assertEqual(accept_first_response.status_code, status.HTTP_200_OK)
+
+        accept_second_response = self.client.patch(
+            reverse("request_status", args=[second.data["id"]]),
+            {"status": WasteRequest.Status.ACCEPTED},
+            format="json",
+        )
+        self.assertEqual(accept_second_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        second_request = WasteRequest.objects.get(pk=second.data["id"])
+        self.assertEqual(second_request.status, WasteRequest.Status.PENDING)
+
+    def test_processors_can_view_competing_listing_requests(self):
+        self.create_request(self.processor, quantity="25.00", price="200.00")
+        self.client.credentials()
+        self.create_request(self.other_processor, quantity="30.00", price="250.00")
+
+        self.authenticate(self.processor)
+        response = self.client.get(reverse("listing-bids", args=[self.listing.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+        self.assertEqual(response.data[0]["proposed_price"], "250.00")
+        self.assertEqual(response.data[1]["proposed_price"], "200.00")
 
     def test_contact_info_requires_accepted_request(self):
         create_response = self.create_request()

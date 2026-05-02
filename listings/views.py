@@ -56,6 +56,35 @@ class WasteListingDetailView(generics.RetrieveUpdateDestroyAPIView):
         return WasteListingCreateUpdateSerializer if self.request.method in ("PUT", "PATCH") else WasteListingDetailSerializer
 
 
+class ListingRequestListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        from orders.serializers import WasteRequestSerializer
+
+        return WasteRequestSerializer
+
+    def get_queryset(self):
+        from accounts.models import User
+        from orders.models import WasteRequest
+
+        listing = get_object_or_404(WasteListing, pk=self.kwargs["pk"])
+        user = self.request.user
+
+        if not (
+            listing.farmer_id == user.id
+            or getattr(user, "role", None) == User.Role.PROCESSOR
+        ):
+            raise PermissionDenied("Only processors and the listing owner can view listing requests.")
+
+        return (
+            WasteRequest.objects
+            .select_related("listing", "processor")
+            .filter(listing=listing)
+            .order_by("-proposed_price", "-created_at")
+        )
+
+
 class ListingImageUploadView(generics.CreateAPIView):
     """
     POST /api/v1/listings/<id>/images/
